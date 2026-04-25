@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/sevasetu-api', './server']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/sevasetu-api']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - sevasetu-api
+      - --image=gcr.io/$PROJECT_ID/sevasetu-api
+      - --platform=managed
+      - --region=asia-south1
+      - --allow-unauthenticated
+      - --set-env-vars=NODE_ENV=production

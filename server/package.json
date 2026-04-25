@@ -1,0 +1,37 @@
+{
+  "name": "sevasetu-server",
+  "version": "1.0.0",
+  "description": "SevaSetu Backend - Node.js + Express",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "db:generate": "prisma generate --schema ../prisma/schema.prisma",
+    "db:push": "prisma db push --schema ../prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema ../prisma/schema.prisma",
+    "db:studio": "prisma studio --schema ../prisma/schema.prisma",
+    "db:seed": "prisma db seed"
+  },
+  "prisma": {
+    "seed": "node ../prisma/seed.js"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.7.0",
+    "@google/generative-ai": "^0.21.0",
+    "@prisma/client": "^5.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "firebase-admin": "^12.0.0",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "prisma": "^5.22.0"
+  }
+}
