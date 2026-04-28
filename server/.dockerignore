@@ -1,6 +1,7 @@
 node_modules
 .env
+prisma/dev.db
+prisma/dev.db-journal
 *.log
-.git
-.dockerignore
-Dockerfile
+create_user.mjs
+seed_demo_user.mjs

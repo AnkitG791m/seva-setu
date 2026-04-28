@@ -1,56 +1,32 @@
-import admin from '../lib/firebase.js';
+import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
 
+const JWT_SECRET = process.env.JWT_SECRET || 'sevasetu_dev_secret_2026';
+
 /**
- * Verify Firebase ID token and attach the DB user to req.user.
+ * Verify JWT and attach the DB user to req.user.
+ * Optional: if allowGuest=true, unauthenticated users get req.user = null
  */
 export async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
-  const isBypass = process.env.BYPASS_AUTH === 'true' || authHeader === 'Bearer dummy_token';
 
-  if (!authHeader?.startsWith('Bearer ') && !isBypass) {
+  if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization header' });
   }
 
-  const token = authHeader?.split(' ')[1];
+  const token = authHeader.split(' ')[1];
 
   try {
-    if (isBypass) {
-      // In bypass mode, find any user or create a dummy one
-      let user = await prisma.user.findFirst({
-        where: { role: 'COORDINATOR' }
-      });
-
-      if (!user) {
-        user = await prisma.user.create({
-          data: {
-            name: 'Admin (Dummy)',
-            email: 'admin@sevasetu.dummy',
-            role: 'COORDINATOR',
-            firebase_uid: 'dummy_uid_123'
-          }
-        });
-      }
-
-      req.user = user;
-      req.firebaseUser = { uid: user.firebase_uid, email: user.email };
-      return next();
-    }
-
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await prisma.user.findUnique({
-      where: { firebase_uid: decoded.uid },
+      where: { id: decoded.sub },
     });
 
-    if (!user) {
-      return res.status(401).json({ error: 'User not found in database' });
-    }
+    if (!user) return res.status(401).json({ error: 'User not found' });
 
     req.user = user;
-    req.firebaseUser = decoded;
     next();
   } catch (err) {
-    console.error('Auth error:', err.message);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
@@ -61,7 +37,6 @@ export async function authenticate(req, res, next) {
  */
 export function authorize(...roles) {
   return (req, res, next) => {
-    if (process.env.BYPASS_AUTH === 'true') return next();
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });

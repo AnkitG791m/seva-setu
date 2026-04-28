@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String     @id @default(cuid())
+  name          String?
+  phone         String?    @unique
+  email         String     @unique
+  password_hash String
+  role          String     @default("VOLUNTEER")
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+  volunteer     Volunteer?
+
+  @@map("users")
+}
+
+model NeedReport {
+  id              String   @id @default(cuid())
+  title           String
+  description     String
+  category        String
+  location        String
+  lat             Float
+  lng             Float
+  urgency_score   Int      @default(0)
+  gemini_reason   String?
+  priority_label  String?
+  status          String   @default("OPEN")
+  photo_url       String?
+  people_affected Int      @default(1)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  tasks           Task[]
+
+  @@map("need_reports")
+}
+
+model Volunteer {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skills          String?
+  preferred_zones String?
+  is_available    Boolean  @default(true)
+  avg_rating      Float    @default(0)
+  lat             Float?
+  lng             Float?
+  fcm_token       String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  tasks           Task[]
+
+  @@map("volunteers")
+}
+
+model Task {
+  id           String     @id @default(cuid())
+  needReportId String
+  needReport   NeedReport @relation(fields: [needReportId], references: [id], onDelete: Cascade)
+  volunteerId  String
+  volunteer    Volunteer  @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  status       String     @default("PENDING")
+  assigned_at  DateTime   @default(now())
+  completed_at DateTime?
+  feedback     Feedback?
+
+  @@map("tasks")
+}
+
+model Feedback {
+  id         String   @id @default(cuid())
+  taskId     String   @unique
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  rating     Int      @default(0)
+  comment    String?
+  created_at DateTime @default(now())
+
+  @@map("feedbacks")
+}

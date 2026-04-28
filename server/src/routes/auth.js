@@ -1,79 +1,107 @@
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma.js';
-import admin from '../lib/firebase.js';
 
 const router = Router();
+const JWT_SECRET = process.env.JWT_SECRET || 'sevasetu_dev_secret_2026';
+const JWT_EXPIRES = '30d';
 
-/**
- * POST /api/auth/register
- * Called after Firebase sign-up to persist user in DB.
- */
+// ─── Middleware: verify JWT ──────────────────────────────────────────────────
+export async function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Missing token' });
+  try {
+    const decoded = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    req.userId = decoded.sub;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+
+// ─── POST /api/auth/register ─────────────────────────────────────────────────
 router.post('/register', async (req, res) => {
-  const { firebase_uid, name, email, phone, role } = req.body;
+  const { name, email, password, phone, role } = req.body;
 
-  if (!firebase_uid) {
-    return res.status(400).json({ error: 'firebase_uid is required' });
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
 
   try {
-    // Verify the token actually belongs to this firebase_uid
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Missing token' });
-    }
-    const decoded = await admin.auth().verifyIdToken(authHeader.split(' ')[1]);
-    if (decoded.uid !== firebase_uid) {
-      return res.status(403).json({ error: 'Token UID mismatch' });
-    }
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
 
-    const existing = await prisma.user.findUnique({ where: { firebase_uid } });
-    if (existing) return res.json(existing);
-
+    const password_hash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
       data: {
-        name,
+        name: name || email.split('@')[0],
         email,
-        phone,
-        firebase_uid,
-        role: role ?? 'VOLUNTEER',
+        password_hash,
+        phone: phone || null,
+        role: role || 'VOLUNTEER',
       },
     });
 
-    // If registering as VOLUNTEER, create the volunteer profile
-    if (user.role === 'VOLUNTEER') {
+    // Auto-create volunteer profile for volunteers/field workers
+    if (user.role === 'VOLUNTEER' || user.role === 'FIELD_WORKER') {
       await prisma.volunteer.create({
-        data: { userId: user.id, skills: [], preferred_zones: [] },
+        data: { userId: user.id, skills: null, preferred_zones: null },
       });
     }
 
-    return res.status(201).json(user);
+    const token = jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    const { password_hash: _, ...userSafe } = user;
+    return res.status(201).json({ user: userSafe, token });
   } catch (err) {
     console.error('Register error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
 
-/**
- * GET /api/auth/me
- * Returns DB user from Firebase token.
- */
-router.get('/me', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing token' });
+// ─── POST /api/auth/login ────────────────────────────────────────────────────
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
   }
 
   try {
-    const decoded = await admin.auth().verifyIdToken(authHeader.split(' ')[1]);
     const user = await prisma.user.findUnique({
-      where: { firebase_uid: decoded.uid },
+      where: { email },
       include: { volunteer: true },
     });
 
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    return res.json(user);
+    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+
+    const token = jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    const { password_hash: _, ...userSafe } = user;
+    return res.json({ user: userSafe, token });
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid token' });
+    console.error('Login error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /api/auth/me ────────────────────────────────────────────────────────
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      include: { volunteer: true },
+    });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const { password_hash: _, ...userSafe } = user;
+    return res.json(userSafe);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

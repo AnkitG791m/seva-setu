@@ -1,207 +1,62 @@
-import { createContext, useContext, useEffect, useState } from 'react';
-import {
-  onAuthStateChanged,
-  signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-} from 'firebase/auth';
-import { auth, googleProvider, messaging } from '../lib/firebase.js';
-import { getMe, registerUser, updateFcmToken } from '../lib/api.js';
-import { getToken, onMessage } from 'firebase/messaging';
-import toast from 'react-hot-toast';
+import { createContext, useContext, useState, useEffect } from 'react';
+import axios from 'axios';
+
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const TOKEN_KEY = 'ss_token';
 
 const AuthContext = createContext(null);
 
+// Simple API instance
+const api = axios.create({ baseURL: BASE_URL });
+api.interceptors.request.use(cfg => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  return cfg;
+});
+
 export function AuthProvider({ children }) {
-  const [user, setUser]           = useState(null);   // DB user
-  const [firebaseUser, setFirebase] = useState(null); // Firebase user
-  const [loading, setLoading]     = useState(true);
-  const [confirmationResult, setConfirmationResult] = useState(null);
+  const [user, setUser]     = useState(null);
+  const [loading, setLoading] = useState(true);
 
+  // On mount: restore session from localStorage token
   useEffect(() => {
-    // Failsafe: Ensure loading is set to false after 2 seconds even if Firebase hangs
-    const failsafe = setTimeout(() => {
-      if (loading) {
-        console.warn('Auth initialization timed out, using guest mode');
-        setLoading(false);
-      }
-    }, 2000);
-
-    const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      clearTimeout(failsafe);
-      setFirebase(fbUser);
-      if (fbUser) {
-        try {
-          const { data } = await getMe();
-          setUser(data);
-          
-          // FCM Setup for volunteers
-          if (messaging && (data.role === 'VOLUNTEER' || data.role === 'FIELD_WORKER')) {
-            try {
-              const permission = await Notification.requestPermission();
-              if (permission === 'granted') {
-                const token = await getToken(messaging, { 
-                  // vapidKey: 'YOUR_PUBLIC_VAPID_KEY_HERE' 
-                });
-                if (token) {
-                  await updateFcmToken(token);
-                }
-              }
-            } catch (err) {
-              console.error('FCM Token generation failed:', err);
-            }
-          }
-
-        } catch {
-          setUser(null);
-        }
-      } else {
-        setUser(null);
-      }
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
       setLoading(false);
-    });
-
-    let unsubscribeOnMessage = null;
-    if (messaging) {
-      unsubscribeOnMessage = onMessage(messaging, (payload) => {
-        const { title, body } = payload.notification || {};
-        const { taskId, urgencyScore, locationLat, locationLng, deepLink } = payload.data || {};
-
-        toast.custom(
-          (t) => (
-            <div className={`bg-slate-800 border border-brand-500/30 text-white p-4 flex flex-col gap-2 rounded-xl shadow-2xl w-80 animate-slide-up ${t.visible ? 'animate-enter' : 'animate-leave'}`}>
-              <div className="font-bold border-b border-slate-700 pb-2">📋 {title || 'Nayi Task'}</div>
-              <div className="text-sm text-slate-300">
-                📍 {body ? body.split('-')[1]?.trim() || body : 'Location'} <br />
-                🔥 Urgency: <span className="font-bold text-orange-400">{urgencyScore || 'N/A'}</span>
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button 
-                  onClick={() => {
-                    toast.dismiss(t.id);
-                    if (deepLink) window.location.href = deepLink;
-                  }}
-                  className="flex-1 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-xs py-1.5 rounded transition-colors"
-                >
-                  Dekho
-                </button>
-                <button 
-                  onClick={() => toast.dismiss(t.id)}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-semibold text-xs py-1.5 rounded transition-colors"
-                >
-                  Baad mein
-                </button>
-              </div>
-            </div>
-          ),
-          { duration: 10000, position: 'top-center' }
-        );
-      });
+      return;
     }
-
-    return () => {
-      unsub();
-      if (unsubscribeOnMessage) unsubscribeOnMessage();
-    };
+    api.get('/auth/me')
+      .then(({ data }) => setUser(data))
+      .catch(() => localStorage.removeItem(TOKEN_KEY))
+      .finally(() => setLoading(false));
   }, []);
 
-  const loginWithGoogle = async () => {
-    const result = await signInWithPopup(auth, googleProvider);
-    // Try to get the user from DB; if not found, register them
-    try {
-      const { data } = await getMe();
-      setUser(data);
-      return data;
-    } catch {
-      const { data } = await registerUser({
-        firebase_uid: result.user.uid,
-        name:         result.user.displayName || 'Anonymous',
-        email:        result.user.email,
-        role:         'VOLUNTEER',
-      });
-      setUser(data);
-      return data;
-    }
-  };
+  async function login(email, password) {
+    const { data } = await api.post('/auth/login', { email, password });
+    localStorage.setItem(TOKEN_KEY, data.token);
+    setUser(data.user);
+    return data.user;
+  }
 
-  const loginWithEmail = async (email, password) => {
-    await signInWithEmailAndPassword(auth, email, password);
-    const { data } = await getMe();
-    setUser(data);
-    return data;
-  };
+  async function register({ email, password, name, phone, role }) {
+    const { data } = await api.post('/auth/register', { email, password, name, phone, role });
+    localStorage.setItem(TOKEN_KEY, data.token);
+    setUser(data.user);
+    return data.user;
+  }
 
-  const registerWithEmail = async ({ email, password, name, phone, role }) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const { data } = await registerUser({
-      firebase_uid: cred.user.uid,
-      name,
-      email,
-      phone,
-      role,
-    });
-    setUser(data);
-    return data;
-  };
-
-  const loginWithPhone = async (phoneNumber, recaptchaVerifier) => {
-    const confirmation = await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
-    setConfirmationResult(confirmation);
-    return confirmation;
-  };
-
-  const verifyOTP = async (code) => {
-    if (!confirmationResult) throw new Error('No OTP request found');
-    const result = await confirmationResult.confirm(code);
-    try {
-      const { data } = await getMe();
-      setUser(data);
-      return data;
-    } catch {
-      // Register if it doesn't exist. Name and email optional due to DB changes
-      const { data } = await registerUser({
-        firebase_uid: result.user.uid,
-        name: null,
-        email: null,
-        phone: result.user.phoneNumber,
-        role: 'FIELD_WORKER', // Default to FIELD_WORKER for phone auth as per instructions
-      });
-      setUser(data);
-      return data;
-    }
-  };
-
-  const logout = async () => {
-    await signOut(auth);
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY);
     setUser(null);
-    setFirebase(null);
-    setConfirmationResult(null);
-  };
+  }
 
-  const dummyUser = {
-    id: 'dummy-admin',
-    name: 'Admin (Dummy)',
-    email: 'admin@sevasetu.dummy',
-    role: 'COORDINATOR',
-  };
+  // Guest mode: skip login
+  function continueAsGuest() {
+    setUser({ id: 'guest', name: 'Guest', role: 'GUEST', isGuest: true });
+  }
 
   return (
-    <AuthContext.Provider
-      value={{ 
-        user: user || dummyUser, 
-        firebaseUser, 
-        loading, 
-        loginWithGoogle, 
-        loginWithEmail, 
-        registerWithEmail, 
-        loginWithPhone, 
-        verifyOTP, 
-        logout 
-      }}
-    >
+    <AuthContext.Provider value={{ user, loading, login, register, logout, continueAsGuest }}>
       {!loading && children}
     </AuthContext.Provider>
   );
@@ -209,6 +64,9 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
+  if (!ctx) throw new Error('useAuth must be inside AuthProvider');
   return ctx;
 }
+
+// Re-export api for other files that import from api.js
+export { api };

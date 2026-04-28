@@ -1,0 +1,14 @@
+# Root .gcloudignore - tells gcloud what to skip in uploads
+.gcloudignore
+.git
+.gitignore
+node_modules/
+server/node_modules/
+client/node_modules/
+client/dist/
+*.log
+*.db
+dev.db
+presentation/
+create_admin.js
+README.md

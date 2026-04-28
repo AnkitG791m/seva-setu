@@ -3,8 +3,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 
 // Routes
 import authRoutes from './routes/auth.js';
@@ -17,21 +15,36 @@ import uploadRoutes from './routes/upload.js';
 import aiRoutes from './routes/ai.js';
 import reportsRoutes from './routes/reports.js';
 
-dotenv.config();
+// Startup seed
+import { seedDefaultUsers } from './startup/seed.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet());
+// ─── Middleware ────────────────────────────────────────────────────────────────
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('dev'));
+
+const ALLOWED_ORIGINS = [
+  'https://seva-setu-74bcc.web.app',
+  'https://seva-setu-74bcc.firebaseapp.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
+];
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked: ${origin}`));
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 app.use(express.json({ limit: '10mb' }));
@@ -61,14 +74,20 @@ app.use((_req, res) => {
 // ─── Global error handler ─────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
-  });
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`🚀 SevaSetu server running on http://localhost:${PORT}`);
-});
+async function start() {
+  try {
+    await seedDefaultUsers();
+  } catch (e) {
+    console.warn('⚠️ Seed warning:', e.message);
+  }
+  app.listen(PORT, () => {
+    console.log(`🚀 SevaSetu server running on http://localhost:${PORT}`);
+  });
+}
 
+start();
 export default app;
